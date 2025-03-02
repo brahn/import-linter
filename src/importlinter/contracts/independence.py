@@ -9,7 +9,7 @@ from typing_extensions import TypedDict
 from importlinter.application import contract_utils, output
 from importlinter.application.contract_utils import AlertLevel
 from importlinter.domain import fields
-from importlinter.domain.contract import Contract, ContractCheck
+from importlinter.domain.contract import Contract, ContractCheck, Violation
 from importlinter.domain.helpers import module_expressions_to_modules
 from importlinter.domain.imports import Module
 
@@ -17,7 +17,8 @@ from ._common import (
     DetailedChain,
     Link,
     build_detailed_chain_from_route,
-    render_chain_data,
+    notes_from_chain_data,
+    render_notes_from_chain_data,
 )
 
 
@@ -74,19 +75,30 @@ class IndependenceContract(Contract):
         )
 
     def render_broken_contract(self, check: "ContractCheck") -> None:
+        prev_summary = None
+        for v_idx, violation in enumerate(self.violations(check)):
+            if violation.summary != prev_summary:
+                if v_idx > 0:
+                    output.new_line()
+                output.print_error(f"{violation.summary}:")
+                prev_summary = violation.summary
+                output.new_line()
+            render_notes_from_chain_data(violation.import_notes)
+            output.new_line()
+        output.new_line()
+
+    def violations(self, check: ContractCheck) -> list[Violation]:
+        result = []
         for chains_data in cast(List[_SubpackageChainData], check.metadata["invalid_chains"]):
             downstream, upstream = (
                 chains_data["downstream_module"],
                 chains_data["upstream_module"],
             )
-            output.print(f"{downstream} is not allowed to import {upstream}:")
-            output.new_line()
-
+            summary = f"{downstream} is not allowed to import {upstream}"
             for chain_data in chains_data["chains"]:
-                render_chain_data(chain_data)
-                output.new_line()
-
-            output.new_line()
+                notes = notes_from_chain_data(chain_data)
+                result.append(Violation(summary, notes))
+        return result
 
     def _check_all_modules_exist_in_graph(self, graph: ImportGraph, modules) -> None:
         for module in modules:

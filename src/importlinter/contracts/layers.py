@@ -9,11 +9,17 @@ from typing_extensions import TypedDict
 from importlinter.application import contract_utils, output
 from importlinter.application.contract_utils import AlertLevel
 from importlinter.domain import fields
-from importlinter.domain.contract import Contract, ContractCheck, InvalidContractOptions
+from importlinter.domain.contract import Contract, ContractCheck, InvalidContractOptions, Violation
 from importlinter.domain.helpers import module_expressions_to_modules
 from importlinter.domain.imports import Module
 
-from ._common import DetailedChain, build_detailed_chain_from_route, render_chain_data
+from ._common import (
+    DetailedChain,
+    ImportNote,
+    build_detailed_chain_from_route,
+    notes_from_chain_data,
+    render_notes_from_chain_data,
+)
 
 
 _INDEPENDENT_LAYER_DELIMITER = "|"
@@ -181,28 +187,54 @@ class LayersContract(Contract):
         return flattened
 
     def render_broken_contract(self, check: ContractCheck) -> None:
+        prev_summary = None
+        for v_idx, violation in enumerate(self._chain_violations(check)):
+            if violation.summary != prev_summary:
+                if v_idx > 0:
+                    output.new_line()
+                output.print_error(f"{violation.summary}:")
+                prev_summary = violation.summary
+                output.new_line()
+            render_notes_from_chain_data(violation.import_notes)
+            output.new_line()
+
+        output.new_line()
+
+        for violation in self._undeclared_module_violations(check):
+            if violation.summary != prev_summary:
+                output.print_error(f"{violation.summary}:")
+                prev_summary = violation.summary
+                output.new_line()
+            output.print_error(f"- {violation.import_notes[0].msg}", bold=False)
+        output.new_line()
+        output.print(
+            "(Since this contract is marked as 'exhaustive', every child of every "
+            "container must be declared as a layer.)"
+        )
+        output.new_line()
+
+    def violations(self, check: ContractCheck) -> list[Violation]:
+        return self._chain_violations(check) + self._undeclared_module_violations(check)
+
+    def _chain_violations(self, check: ContractCheck) -> list[Violation]:
+        result = []
         for chains_data in cast(List[_LayerChainData], check.metadata["invalid_dependencies"]):
             higher_layer, lower_layer = (chains_data["imported"], chains_data["importer"])
-            output.print(f"{lower_layer} is not allowed to import {higher_layer}:")
-            output.new_line()
+            summary = f"{lower_layer} is not allowed to import {higher_layer}"
 
             for chain_data in chains_data["routes"]:
-                render_chain_data(chain_data)
-                output.new_line()
+                notes = notes_from_chain_data(chain_data)
+                result.append(Violation(summary, notes))
+        return result
 
-            output.new_line()
-
+    def _undeclared_module_violations(self, check: ContractCheck) -> list[Violation]:
+        result = []
         if check.metadata["undeclared_modules"]:
-            output.print("The following modules are not listed as layers:")
-            output.new_line()
+            summary = "The following modules are not listed as layers"
             for module in sorted(check.metadata["undeclared_modules"]):
-                output.print_error(f"- {module}", bold=False)
-            output.new_line()
-            output.print(
-                "(Since this contract is marked as 'exhaustive', every child of every "
-                "container must be declared as a layer.)"
-            )
-            output.new_line()
+                violation = Violation(summary, [ImportNote(module, module, ())])
+                result.append(violation)
+        return result
 
     def _validate_containers(self, graph: grimp.ImportGraph, containers: set[str]) -> None:
         root_package_names = self.session_options["root_packages"]
