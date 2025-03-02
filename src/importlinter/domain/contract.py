@@ -1,4 +1,5 @@
 import abc
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Type
 
 from grimp import ImportGraph
@@ -84,6 +85,10 @@ class Contract(abc.ABC):
     def render_broken_contract(self, check: "ContractCheck") -> None:
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def violations(self, check: "ContractCheck") -> list["Violation"]:
+        raise NotImplementedError
+
 
 class InvalidContractOptions(Exception):
     """
@@ -95,6 +100,12 @@ class InvalidContractOptions(Exception):
 
     def __init__(self, errors: Dict[str, str]) -> None:
         self.errors = errors
+
+
+@dataclass
+class Violation:
+    summary: str
+    import_notes: list[Any]  # actually ImportNote objects, but need to avoid circular import
 
 
 class ContractCheck:

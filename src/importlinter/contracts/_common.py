@@ -8,6 +8,7 @@ without warning.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import itertools
 from typing import List, Optional, Sequence, Tuple, Union
 
@@ -35,15 +36,37 @@ class DetailedChain(TypedDict):
     extra_lasts: List[Link]
 
 
-def render_chain_data(chain_data: DetailedChain) -> None:
+@dataclass
+class ImportNote:
+    module: str
+    msg: str
+    line_numbers: Tuple[Optional[int], ...]
+
+    def __str__(self) -> str:
+        return f"{self.msg} ({format_line_numbers(self.line_numbers)})"
+
+
+def render_notes_from_chain_data(notes: list[ImportNote]) -> None:
+    for position, import_note in enumerate(notes):
+        if position == 0:
+            output.print_error(f"- {import_note}", bold=False)
+        else:
+            output.print_error(f"  {import_note}", bold=False)
+
+
+def notes_from_chain_data(chain_data: DetailedChain) -> list[ImportNote]:
     main_chain = chain_data["chain"]
-    _render_direct_import(main_chain[0], extra_firsts=chain_data["extra_firsts"], first_line=True)
+    notes = _notes_from_direct_import(main_chain[0], extra_firsts=chain_data["extra_firsts"])
 
     for direct_import in main_chain[1:-1]:
-        _render_direct_import(direct_import)
+        notes.extend(_notes_from_direct_import(direct_import))
 
     if len(main_chain) > 1:
-        _render_direct_import(main_chain[-1], extra_lasts=chain_data["extra_lasts"])
+        notes.extend(
+            _notes_from_direct_import(main_chain[-1], extra_lasts=chain_data["extra_lasts"])
+        )
+
+    return notes
 
 
 def find_segments(
@@ -149,39 +172,36 @@ def format_line_numbers(line_numbers: Sequence[Optional[int]]) -> str:
     )
 
 
-def _render_direct_import(
+def _notes_from_direct_import(
     direct_import,
-    first_line: bool = False,
     extra_firsts: Optional[List] = None,
     extra_lasts: Optional[List] = None,
-) -> None:
-    import_strings = []
+) -> list[ImportNote]:
+
+    import_notes = []
     if extra_firsts:
         for position, source in enumerate([direct_import] + extra_firsts[:-1]):
             prefix = "& " if position > 0 else ""
             importer = source["importer"]
-            line_numbers = format_line_numbers(source["line_numbers"])
-            import_strings.append(f"{prefix}{importer} ({line_numbers})")
+            note = ImportNote(importer, f"{prefix}{importer}", source["line_numbers"])
+            import_notes.append(note)
         importer, imported = extra_firsts[-1]["importer"], extra_firsts[-1]["imported"]
-        line_numbers = format_line_numbers(extra_firsts[-1]["line_numbers"])
-        import_strings.append(f"& {importer} -> {imported} ({line_numbers})")
+        note = ImportNote(importer, f"& {importer} -> {imported}", extra_firsts[-1]["line_numbers"])
+        import_notes.append(note)
     else:
         importer, imported = direct_import["importer"], direct_import["imported"]
-        line_numbers = format_line_numbers(direct_import["line_numbers"])
-        import_strings.append(f"{importer} -> {imported} ({line_numbers})")
+        note = ImportNote(importer, f"{importer} -> {imported}", direct_import["line_numbers"])
+        import_notes.append(note)
 
     if extra_lasts:
-        indent_string = (len(direct_import["importer"]) + 4) * " "
+        importer = direct_import["importer"]
+        indent_string = (len(importer) + 4) * " "
         for destination in extra_lasts:
             imported = destination["imported"]
-            line_numbers = format_line_numbers(destination["line_numbers"])
-            import_strings.append(f"{indent_string}& {imported} ({line_numbers})")
+            note = ImportNote(importer, f"{indent_string}& {imported}", destination["line_numbers"])
+            import_notes.append(note)
 
-    for position, import_string in enumerate(import_strings):
-        if first_line and position == 0:
-            output.print_error(f"- {import_string}", bold=False)
-        else:
-            output.print_error(f"  {import_string}", bold=False)
+    return import_notes
 
 
 def build_detailed_chain_from_route(route: grimp.Route, graph: grimp.ImportGraph) -> DetailedChain:

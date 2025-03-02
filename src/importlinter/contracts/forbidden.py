@@ -8,11 +8,11 @@ from importlinter.application import contract_utils, output
 from importlinter.application.contract_utils import AlertLevel
 from importlinter.configuration import settings
 from importlinter.domain import fields
-from importlinter.domain.contract import Contract, ContractCheck
+from importlinter.domain.contract import Contract, ContractCheck, Violation
 from importlinter.domain.helpers import module_expressions_to_modules
 from importlinter.domain.imports import Module
 
-from ._common import format_line_numbers
+from ._common import ImportNote
 
 
 class ForbiddenContract(Contract):
@@ -142,27 +142,33 @@ class ForbiddenContract(Contract):
         )
 
     def render_broken_contract(self, check: "ContractCheck") -> None:
-        count = 0
+        for v_idx, violation in enumerate(self.violations(check)):
+            if v_idx > 0:
+                output.new_line()
+            output.print_error(f"{violation.summary}:")
+            output.new_line()
+            for n_idx, note in enumerate(violation.import_notes):
+                if n_idx == 0:
+                    output.print_error(f"-   {note}", bold=False)
+                else:
+                    output.indent_cursor()
+                    output.print_error(str(note), bold=False)
+            output.new_line()
+        output.new_line()
+
+    def violations(self, check: ContractCheck) -> list[Violation]:
+        result = []
         for chains_data in check.metadata["invalid_chains"]:
             downstream, upstream = chains_data["downstream_module"], chains_data["upstream_module"]
-            output.print_error(f"{downstream} is not allowed to import {upstream}:")
-            output.new_line()
-            count += len(chains_data["chains"])
+            summary = f"{downstream} is not allowed to import {upstream}"
             for chain in chains_data["chains"]:
-                first_line = True
+                notes = []
                 for direct_import in chain:
                     importer, imported = direct_import["importer"], direct_import["imported"]
-                    line_numbers = format_line_numbers(direct_import["line_numbers"])
-                    import_string = f"{importer} -> {imported} ({line_numbers})"
-                    if first_line:
-                        output.print_error(f"-   {import_string}", bold=False)
-                        first_line = False
-                    else:
-                        output.indent_cursor()
-                        output.print_error(import_string, bold=False)
-                output.new_line()
-
-            output.new_line()
+                    note = ImportNote(importer, f"{importer} -> {imported}", direct_import["line_numbers"])
+                    notes.append(note)
+                result.append(Violation(summary, notes))
+        return result
 
     def _check_all_modules_exist_in_graph(
         self, modules: Iterable[Module], graph: ImportGraph
